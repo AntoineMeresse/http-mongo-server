@@ -14,6 +14,12 @@ import (
 	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
+const (
+	STATE_INIT  = "INIT"
+	STATE_VERIF = "VERIFIED"
+	STATE_REJEC = "REJECTED"
+)
+
 type serverContext struct {
 	port            string
 	mongoClient     *mongo.Client
@@ -22,9 +28,10 @@ type serverContext struct {
 }
 
 type MyDocument struct {
-	ID   *primitive.ObjectID `bson:"_id,omitempty" json:"id,omitempty"`
-	Name string              `json:"name"`
-	Key  string              `json:"key"`
+	ID    *primitive.ObjectID `bson:"_id,omitempty" json:"id,omitempty"`
+	Name  string              `json:"name"`
+	Key   string              `json:"key"`
+	State string              `json:"state"`
 }
 
 func (s *serverContext) rootHandler(w http.ResponseWriter, r *http.Request) {
@@ -79,6 +86,7 @@ func (s *serverContext) saveHandler(w http.ResponseWriter, r *http.Request) {
 		id := primitive.NewObjectID()
 		doc.ID = &id
 	}
+	doc.State = STATE_INIT
 
 	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
 	defer cancel()
@@ -96,6 +104,31 @@ func (s *serverContext) saveHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	json.NewEncoder(w).Encode(doc)
+}
+
+func (s *serverContext) updateToVerified(w http.ResponseWriter, r *http.Request) {
+	key := r.PathValue("key")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	collection := s.mongoClient.Database(s.dbName).Collection("documentCollection")
+
+	filter := bson.M{"key": key, "state": STATE_INIT}
+	update := bson.M{
+		"$set": bson.M{
+			"state": STATE_VERIF,
+		},
+	}
+
+	res, err := collection.UpdateOne(ctx, filter, update)
+	if err != nil {
+		http.Error(w, "Error: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+	w.Write(fmt.Appendf(nil, "Match: %d| Updated: %d", res.MatchedCount, res.ModifiedCount))
 }
 
 func main() {
@@ -116,9 +149,10 @@ func main() {
 
 	port := fmt.Sprintf(":%s", ctx.port)
 
-	http.HandleFunc("/", ctx.rootHandler)
-	http.HandleFunc("/health", ctx.healthHandler)
-	http.HandleFunc("/save", ctx.saveHandler)
+	http.HandleFunc("GET /", ctx.rootHandler)
+	http.HandleFunc("GET /health", ctx.healthHandler)
+	http.HandleFunc("POST /save", ctx.saveHandler)
+	http.HandleFunc("PUT /update/{key}/verified", ctx.updateToVerified)
 
 	fmt.Println("Server is listening on port http://localhost" + port)
 	if err := http.ListenAndServe(port, nil); err != nil {
