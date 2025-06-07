@@ -15,7 +15,7 @@ import (
 )
 
 type serverContext struct {
-	portNumber      int
+	port            string
 	mongoClient     *mongo.Client
 	dbName          string
 	collectionIndex map[string]bool
@@ -28,7 +28,7 @@ type MyDocument struct {
 }
 
 func (s *serverContext) rootHandler(w http.ResponseWriter, r *http.Request) {
-	fmt.Fprintf(w, "This is the main page. Port used: %d", s.portNumber)
+	fmt.Fprintf(w, "This is the main page. Port used: %s", s.port)
 }
 
 func (s *serverContext) healthHandler(w http.ResponseWriter, r *http.Request) {
@@ -99,11 +99,10 @@ func (s *serverContext) saveHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func main() {
-	mongoUri := "mongodb://root:password@localhost:27017"
-	mongoDbName := "test"
+	cfg := getEnvVariables("./properties.json")
 
 	// Init mongo
-	clientOptions := options.Client().ApplyURI(mongoUri)
+	clientOptions := options.Client().ApplyURI(cfg.mongoUri)
 	mongoCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
@@ -113,9 +112,9 @@ func main() {
 	}
 
 	// Init context
-	ctx := serverContext{portNumber: 8080, mongoClient: mongoClient, dbName: mongoDbName, collectionIndex: make(map[string]bool)}
+	ctx := serverContext{port: cfg.port, mongoClient: mongoClient, dbName: cfg.mongoDb, collectionIndex: make(map[string]bool)}
 
-	port := fmt.Sprintf(":%d", ctx.portNumber)
+	port := fmt.Sprintf(":%s", ctx.port)
 
 	http.HandleFunc("/", ctx.rootHandler)
 	http.HandleFunc("/health", ctx.healthHandler)

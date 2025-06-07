@@ -6,4 +6,22 @@ services:
     environment:
       MONGO_INITDB_ROOT_USERNAME: root 
       MONGO_INITDB_ROOT_PASSWORD: password
+    networks:
+      - my-network
+  http-server:
+    build: .
+    ports:
+      - "8090:8080"
+    environment:
+      mongoUri: mongodb://root:password@mongodb:27017
+      serverPort: 8080
+    depends_on:
+      mongodb: 
+        condition: service_started
+    networks:
+      - my-network
+
+networks:
+  my-network:
+      
       
