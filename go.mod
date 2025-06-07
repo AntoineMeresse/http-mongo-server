@@ -1,4 +1,4 @@
-module mongo-http-test
+module mongo-http-audit-service
 
 go 1.23.2
 
