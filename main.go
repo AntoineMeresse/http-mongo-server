@@ -15,9 +15,9 @@ import (
 )
 
 const (
-	STATE_INIT  = "INIT"
-	STATE_VERIF = "VERIFIED"
-	STATE_REJEC = "REJECTED"
+	STATE_INIT     = "INIT"
+	STATE_VERIFIED = "VERIFIED"
+	STATE_REJECTED = "REJECTED"
 )
 
 type serverContext struct {
@@ -106,20 +106,19 @@ func (s *serverContext) saveHandler(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(doc)
 }
 
-func (s *serverContext) updateToVerified(w http.ResponseWriter, r *http.Request) {
+func (s *serverContext) updateToState(w http.ResponseWriter, r *http.Request, updateState string) {
 	key := r.PathValue("key")
-
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
 	collection := s.mongoClient.Database(s.dbName).Collection("documentCollection")
 
 	filter := bson.M{"key": key, "state": STATE_INIT}
 	update := bson.M{
 		"$set": bson.M{
-			"state": STATE_VERIF,
+			"state": updateState,
 		},
 	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
 
 	res, err := collection.UpdateOne(ctx, filter, update)
 	if err != nil {
@@ -128,7 +127,15 @@ func (s *serverContext) updateToVerified(w http.ResponseWriter, r *http.Request)
 	}
 
 	w.WriteHeader(http.StatusOK)
-	w.Write(fmt.Appendf(nil, "Match: %d| Updated: %d", res.MatchedCount, res.ModifiedCount))
+	w.Write(fmt.Appendf(nil, "Match: %d| Updated: %d | Update to state: %s", res.MatchedCount, res.ModifiedCount, updateState))
+}
+
+func (s *serverContext) updateToVerified(w http.ResponseWriter, r *http.Request) {
+	s.updateToState(w, r, STATE_VERIFIED)
+}
+
+func (s *serverContext) updateToRejected(w http.ResponseWriter, r *http.Request) {
+	s.updateToState(w, r, STATE_REJECTED)
 }
 
 func main() {
@@ -153,6 +160,7 @@ func main() {
 	http.HandleFunc("GET /health", ctx.healthHandler)
 	http.HandleFunc("POST /save", ctx.saveHandler)
 	http.HandleFunc("PUT /update/{key}/verified", ctx.updateToVerified)
+	http.HandleFunc("PUT /update/{key}/rejected", ctx.updateToRejected)
 
 	fmt.Println("Server is listening on port http://localhost" + port)
 	if err := http.ListenAndServe(port, nil); err != nil {

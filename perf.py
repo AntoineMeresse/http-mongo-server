@@ -6,18 +6,27 @@ import time
 
 URL = "http://localhost:8090/save"
 HEADERS = {'Content-Type': 'application/json'}
-TOTAL_REQUESTS = 2000000  # total number of requests
+TOTAL_REQUESTS = 20_000  # total number of requests
 CONCURRENCY = 20      # number of concurrent workers
 
 def send_request(i):
     date = datetime.now().strftime("%Y-%m-%d_%H:%M:%S")
-    payload = {"name": f"name{i}", "key": f"{date}_key-{i}"}
+    key = f"{date}_key-{i}"
+    payload = {"name": f"name{i}", "key":key}
     try:
         response = requests.post(URL, headers=HEADERS, data=json.dumps(payload))
         if (response.status_code != 200):
             print(f"[{i}] Status: {response.status_code} | Response: {response.text}")
     except Exception as e:
         print(f"[{i}] Request failed: {e}")
+
+    try: 
+        if i % 5 == 0:
+            requests.put(URL.replace("/save", "/update/") + key + "/rejected")
+        else:
+            requests.put(URL.replace("/save", "/update/") + key + "/verified")
+    except:
+        print(f"[{i}] Request failed for update: {e}")
 
 def main():
     start_time = time.time()
