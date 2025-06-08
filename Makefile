@@ -11,4 +11,7 @@ save_KO:
 
 save_OK:
 	http POST $(url)/save key=key1 name=test1
+
+save_batch_OK:
+	http POST $(url)/batch/save @data/batch.json
 	

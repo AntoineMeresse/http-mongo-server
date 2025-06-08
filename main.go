@@ -31,7 +31,12 @@ type MyDocument struct {
 	ID    *primitive.ObjectID `bson:"_id,omitempty" json:"id,omitempty"`
 	Name  string              `json:"name"`
 	Key   string              `json:"key"`
-	State string              `json:"state"`
+	State string              `json:"state,omitempty"`
+}
+
+type MyDocumentList struct {
+	ID        *primitive.ObjectID `bson:"_id,omitempty" json:"id,omitempty"`
+	ToProcess []MyDocument        `json:"documentList"`
 }
 
 func (s *serverContext) rootHandler(w http.ResponseWriter, r *http.Request) {
@@ -138,6 +143,37 @@ func (s *serverContext) updateToRejected(w http.ResponseWriter, r *http.Request)
 	s.updateToState(w, r, STATE_REJECTED)
 }
 
+func (s *serverContext) saveBatchHandler(w http.ResponseWriter, r *http.Request) {
+	collection := s.mongoClient.Database(s.dbName).Collection("documentCollectionBatch")
+
+	var doc MyDocumentList
+	if err := json.NewDecoder(r.Body).Decode(&doc); err != nil {
+		fmt.Println("Could not deserialized body to MyDocumentList:/")
+		http.Error(w, "Error: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if doc.ID == nil {
+		id := primitive.NewObjectID()
+		doc.ID = &id
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+	defer cancel()
+
+	res, err := collection.InsertOne(ctx, doc)
+	if err != nil {
+		fmt.Println("Could not insert document :/")
+		http.Error(w, "Error: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	if res != nil {
+		fmt.Printf("Document batch was inserted. Res: %v\n", res)
+	}
+
+	json.NewEncoder(w).Encode(doc)
+}
+
 func main() {
 	cfg := getEnvVariables("./properties.json")
 
@@ -159,6 +195,7 @@ func main() {
 	http.HandleFunc("GET /", ctx.rootHandler)
 	http.HandleFunc("GET /health", ctx.healthHandler)
 	http.HandleFunc("POST /save", ctx.saveHandler)
+	http.HandleFunc("POST /batch/save", ctx.saveBatchHandler)
 	http.HandleFunc("PUT /update/{key}/verified", ctx.updateToVerified)
 	http.HandleFunc("PUT /update/{key}/rejected", ctx.updateToRejected)
 

@@ -43,7 +43,7 @@ func getEnvVariables(configPath string) serverVar {
 	vars.port = loadVariable(cfg, "serverPort", "8080")
 	vars.mongoUri = loadVariable(cfg, "mongoUri", "mongodb://root:password@localhost:27017")
 	vars.mongoDb = loadVariable(cfg, "mongoDb", "testDefault")
-	fmt.Printf("Server var: %v\n", vars)
+	// fmt.Printf("Server var: %v\n", vars)
 	return vars
 }
 
