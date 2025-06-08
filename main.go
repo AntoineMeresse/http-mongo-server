@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
+	"mongo-http-audit-service/src/myLogger"
 	"net/http"
 	"time"
 
@@ -12,6 +12,8 @@ import (
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
+
+	"github.com/rs/zerolog/log"
 )
 
 const (
@@ -153,7 +155,7 @@ func (s *serverContext) saveBatchHandler(w http.ResponseWriter, r *http.Request)
 
 	var doc MyDocumentList
 	if err := json.NewDecoder(r.Body).Decode(&doc); err != nil {
-		fmt.Println("Could not deserialized body to MyDocumentList:/")
+		fmt.Println("Could not deserialized body to MyDocumentList")
 		http.Error(w, "Error: "+err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -207,21 +209,19 @@ func (s *serverContext) processBatchHandler(w http.ResponseWriter, r *http.Reque
 	defer cancelProcess()
 
 	size := len(batchDocument.ToProcess)
-	// fmt.Printf("Size: %d\n", size)
+	myLogger.Log.Debug().Msgf("Size: %d\n", size)
 	updates := make([]mongo.WriteModel, 0, size)
-	// fmt.Printf("UpdateSize: %d\n", len(updates))
+	myLogger.Log.Debug().Msgf("UpdateSize: %d\n", len(updates))
 
 	// fmt.Println("-------To process --------")
-	for _, doc := range batchDocument.ToProcess {
-		// fmt.Printf("Update n°%d -> key: %s\n", i, doc.Key)
+	for i, doc := range batchDocument.ToProcess {
+		myLogger.Log.Debug().Msgf("Update n°%d -> key: %s\n", i, doc.Key)
 		updates = append(updates,
 			mongo.NewUpdateOneModel().
 				SetFilter(bson.M{"key": doc.Key, "state": bson.M{"$ne": STATE_PROCESSED}}).
 				SetUpdate(bson.M{"$set": bson.M{"state": STATE_PROCESSED}}),
 		)
 	}
-
-	// fmt.Printf("Updates[%d]: %v\n", len(updates), updates)
 
 	res, err := s.mongoClient.Database(s.dbName).Collection("documentCollection").BulkWrite(ctxProcess, updates)
 	if err != nil {
@@ -234,6 +234,10 @@ func (s *serverContext) processBatchHandler(w http.ResponseWriter, r *http.Reque
 
 func main() {
 	cfg := getEnvVariables("./properties.json")
+	myLogger.InitLogging(cfg.dev)
+	if cfg.dev {
+		myLogger.Log.Debug().Msgf("Config: %v", cfg)
+	}
 
 	// Init mongo
 	clientOptions := options.Client().ApplyURI(cfg.mongoUri)
@@ -242,7 +246,7 @@ func main() {
 
 	mongoClient, err := mongo.Connect(mongoCtx, clientOptions)
 	if err != nil {
-		log.Fatal(err)
+		log.Fatal().Msg(err.Error())
 	}
 
 	// Init context
@@ -258,8 +262,8 @@ func main() {
 	http.HandleFunc("PUT /update/{key}/rejected", ctx.updateToRejected)
 	http.HandleFunc("PUT /process/{documentId}", ctx.processBatchHandler)
 
-	fmt.Println("Server is listening on port http://localhost" + port)
+	myLogger.Log.Info().Msg("Server is listening on port http://localhost" + port)
 	if err := http.ListenAndServe(port, nil); err != nil {
-		fmt.Println("Error while starting server: ", err)
+		myLogger.Log.Err(err).Msgf("Error while starting server: %s", err.Error())
 	}
 }

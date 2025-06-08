@@ -5,10 +5,10 @@ from datetime import datetime
 import time
 import random
 
-PORT=8090
+PORT=8080
 URL = f"http://localhost:{PORT}/save"
 HEADERS = {'Content-Type': 'application/json'}
-TOTAL_REQUESTS = 200_000  # total number of requests
+TOTAL_REQUESTS = 200 # total number of requests
 CONCURRENCY = 50 
 BATCH = list()  
 BATCH_SIZE=100
