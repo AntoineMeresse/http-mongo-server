@@ -15,9 +15,10 @@ import (
 )
 
 const (
-	STATE_INIT     = "INIT"
-	STATE_VERIFIED = "VERIFIED"
-	STATE_REJECTED = "REJECTED"
+	STATE_INIT      = "INIT"
+	STATE_VERIFIED  = "VERIFIED"
+	STATE_REJECTED  = "REJECTED"
+	STATE_PROCESSED = "PROCESSED"
 )
 
 type serverContext struct {
@@ -37,6 +38,10 @@ type MyDocument struct {
 type MyDocumentList struct {
 	ID        *primitive.ObjectID `bson:"_id,omitempty" json:"id,omitempty"`
 	ToProcess []MyDocument        `json:"documentList"`
+}
+
+type MyDocumentId struct {
+	ID *primitive.ObjectID `bson:"_id,omitempty" json:"id,omitempty"`
 }
 
 func (s *serverContext) rootHandler(w http.ResponseWriter, r *http.Request) {
@@ -60,7 +65,7 @@ func (s *serverContext) ensureIndex(collection *mongo.Collection, ctx context.Co
 	fmt.Printf("Ensure index start\n")
 	name := collection.Name()
 	if _, ok := s.collectionIndex[name]; ok {
-		fmt.Printf("Ensure index already ok\n")
+		// fmt.Printf("Ensure index already ok\n")
 		return
 	}
 
@@ -74,7 +79,7 @@ func (s *serverContext) ensureIndex(collection *mongo.Collection, ctx context.Co
 		return
 	}
 
-	fmt.Printf("Ensure index was ok. Adding %s to map\n", name)
+	// fmt.Printf("Ensure index was ok. Adding %s to map\n", name)
 	s.collectionIndex[name] = true
 }
 
@@ -171,7 +176,60 @@ func (s *serverContext) saveBatchHandler(w http.ResponseWriter, r *http.Request)
 		fmt.Printf("Document batch was inserted. Res: %v\n", res)
 	}
 
-	json.NewEncoder(w).Encode(doc)
+	json.NewEncoder(w).Encode(MyDocumentId{ID: doc.ID})
+}
+
+func (s *serverContext) processBatchHandler(w http.ResponseWriter, r *http.Request) {
+	key := r.PathValue("documentId")
+	collection := s.mongoClient.Database(s.dbName).Collection("documentCollectionBatch")
+
+	documentId, err := primitive.ObjectIDFromHex(key)
+	if err != nil {
+		http.Error(w, "Error: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	ctxRead, cancelRead := context.WithTimeout(r.Context(), 2*time.Second)
+	defer cancelRead()
+
+	var batchDocument MyDocumentList
+	err = collection.FindOne(ctxRead, bson.M{"_id": documentId}).Decode(&batchDocument)
+	if err != nil {
+		if err == mongo.ErrNoDocuments {
+			http.Error(w, "Error: "+err.Error(), http.StatusNotFound)
+			return
+		}
+		http.Error(w, "Error: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	ctxProcess, cancelProcess := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancelProcess()
+
+	size := len(batchDocument.ToProcess)
+	// fmt.Printf("Size: %d\n", size)
+	updates := make([]mongo.WriteModel, 0, size)
+	// fmt.Printf("UpdateSize: %d\n", len(updates))
+
+	// fmt.Println("-------To process --------")
+	for _, doc := range batchDocument.ToProcess {
+		// fmt.Printf("Update n°%d -> key: %s\n", i, doc.Key)
+		updates = append(updates,
+			mongo.NewUpdateOneModel().
+				SetFilter(bson.M{"key": doc.Key, "state": bson.M{"$ne": STATE_PROCESSED}}).
+				SetUpdate(bson.M{"$set": bson.M{"state": STATE_PROCESSED}}),
+		)
+	}
+
+	// fmt.Printf("Updates[%d]: %v\n", len(updates), updates)
+
+	res, err := s.mongoClient.Database(s.dbName).Collection("documentCollection").BulkWrite(ctxProcess, updates)
+	if err != nil {
+		http.Error(w, "Error: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	json.NewEncoder(w).Encode(res)
 }
 
 func main() {
@@ -198,6 +256,7 @@ func main() {
 	http.HandleFunc("POST /batch/save", ctx.saveBatchHandler)
 	http.HandleFunc("PUT /update/{key}/verified", ctx.updateToVerified)
 	http.HandleFunc("PUT /update/{key}/rejected", ctx.updateToRejected)
+	http.HandleFunc("PUT /process/{documentId}", ctx.processBatchHandler)
 
 	fmt.Println("Server is listening on port http://localhost" + port)
 	if err := http.ListenAndServe(port, nil); err != nil {
