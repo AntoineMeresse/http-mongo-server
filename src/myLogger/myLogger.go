@@ -2,6 +2,7 @@ package myLogger
 
 import (
 	"os"
+	"strings"
 	"time"
 
 	"github.com/rs/zerolog"
@@ -9,9 +10,9 @@ import (
 
 var Log zerolog.Logger
 
-func InitLogging(isDev bool) {
+func InitLogging(isDev bool, levelLog string) {
 	zerolog.TimeFieldFormat = zerolog.TimeFormatUnix
-	zerolog.SetGlobalLevel(zerolog.DebugLevel)
+	zerolog.SetGlobalLevel(getLogLevel(levelLog))
 
 	zerolog.LevelFieldName = "severity"
 	zerolog.LevelFieldMarshalFunc = func(l zerolog.Level) string {
@@ -42,5 +43,21 @@ func InitLogging(isDev bool) {
 	} else {
 		Log = zerolog.New(os.Stderr).With().Timestamp().Caller().Logger()
 	}
+}
 
+func getLogLevel(level string) zerolog.Level {
+	switch strings.ToUpper(level) {
+	case "DEBUG":
+		return zerolog.DebugLevel
+	case "INFO":
+		return zerolog.InfoLevel
+	case "WARN":
+		return zerolog.WarnLevel
+	case "ERROR":
+		return zerolog.ErrorLevel
+	case "FATAL":
+		return zerolog.FatalLevel
+	default:
+		return zerolog.InfoLevel
+	}
 }

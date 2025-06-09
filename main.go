@@ -241,7 +241,7 @@ func (s *serverContext) processBatchHandler(w http.ResponseWriter, r *http.Reque
 
 func main() {
 	cfg := getEnvVariables("./properties.json")
-	myLogger.InitLogging(cfg.dev)
+	myLogger.InitLogging(cfg.dev, cfg.levelLog)
 	if cfg.dev {
 		myLogger.Log.Debug().Msgf("Config: %v", cfg)
 	}

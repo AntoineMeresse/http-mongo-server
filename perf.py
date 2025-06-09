@@ -8,10 +8,10 @@ import random
 PORT=8080
 URL = f"http://localhost:{PORT}/save"
 HEADERS = {'Content-Type': 'application/json'}
-TOTAL_REQUESTS = 200 # total number of requests
+TOTAL_REQUESTS = 20_000 # total number of requests
 CONCURRENCY = 50 
 BATCH = list()  
-BATCH_SIZE=100
+BATCH_SIZE=1000
 
 session = requests.Session()   # number of concurrent workers
 

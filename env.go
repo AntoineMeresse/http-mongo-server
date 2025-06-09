@@ -10,6 +10,7 @@ import (
 
 type serverVar struct {
 	dev      bool
+	levelLog string
 	port     string
 	mongoUri string
 	mongoDb  string
@@ -40,6 +41,7 @@ func getEnvVariables(configPath string) serverVar {
 	vars := serverVar{}
 	cfg := loadConfigPath(configPath)
 	vars.dev = loadBoolVariable(cfg, "dev", false)
+	vars.levelLog = loadVariable(cfg, "levelLog", "INFO")
 	vars.port = loadVariable(cfg, "serverPort", "8080")
 	vars.mongoUri = loadVariable(cfg, "mongoUri", "mongodb://root:password@localhost:27017")
 	vars.mongoDb = loadVariable(cfg, "mongoDb", "testDefault")
