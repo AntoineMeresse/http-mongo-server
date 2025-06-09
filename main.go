@@ -34,7 +34,7 @@ type MyDocument struct {
 	ID    *primitive.ObjectID `bson:"_id,omitempty" json:"id,omitempty"`
 	Name  string              `json:"name"`
 	Key   string              `json:"key"`
-	State string              `json:"state,omitempty"`
+	State string              `bson:"state,omitempty" json:"state,omitempty"`
 }
 
 type MyDocumentList struct {
@@ -64,10 +64,10 @@ func (s *serverContext) healthHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *serverContext) ensureIndex(collection *mongo.Collection, ctx context.Context) {
-	fmt.Printf("Ensure index start\n")
+	myLogger.Log.Debug().Msg("Ensure index start")
 	name := collection.Name()
 	if _, ok := s.collectionIndex[name]; ok {
-		// fmt.Printf("Ensure index already ok\n")
+		myLogger.Log.Trace().Msg("Ensure index already ok")
 		return
 	}
 
@@ -77,11 +77,11 @@ func (s *serverContext) ensureIndex(collection *mongo.Collection, ctx context.Co
 
 	_, err := collection.Indexes().CreateMany(ctx, indexes)
 	if err != nil {
-		fmt.Printf("Could not ensure index already exist. Error: %s", err.Error())
+		myLogger.Log.Error().Msgf("Could not ensure index already exist. Error: %s", err.Error())
 		return
 	}
 
-	// fmt.Printf("Ensure index was ok. Adding %s to map\n", name)
+	myLogger.Log.Debug().Msgf("Ensure index was ok. Adding %s to map", name)
 	s.collectionIndex[name] = true
 }
 
@@ -90,7 +90,7 @@ func (s *serverContext) saveHandler(w http.ResponseWriter, r *http.Request) {
 
 	var doc MyDocument
 	if err := json.NewDecoder(r.Body).Decode(&doc); err != nil {
-		fmt.Println("Could not deserialized body :/")
+		myLogger.Log.Error().Msgf("Could not deserialized body :/")
 		http.Error(w, "Error: "+err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -106,13 +106,13 @@ func (s *serverContext) saveHandler(w http.ResponseWriter, r *http.Request) {
 
 	res, err := collection.InsertOne(ctx, doc)
 	if err != nil {
-		fmt.Println("Could not insert document :/")
+		myLogger.Log.Error().Msgf("Could not insert document :/")
 		http.Error(w, "Error: "+err.Error(), http.StatusBadRequest)
 		return
 	}
 
 	if res != nil {
-		println("Document was inserted")
+		myLogger.Log.Debug().Msg("Document was inserted")
 	}
 
 	json.NewEncoder(w).Encode(doc)
@@ -155,7 +155,7 @@ func (s *serverContext) saveBatchHandler(w http.ResponseWriter, r *http.Request)
 
 	var doc MyDocumentList
 	if err := json.NewDecoder(r.Body).Decode(&doc); err != nil {
-		fmt.Println("Could not deserialized body to MyDocumentList")
+		myLogger.Log.Error().Msg("Could not deserialized body to MyDocumentList")
 		http.Error(w, "Error: "+err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -169,13 +169,13 @@ func (s *serverContext) saveBatchHandler(w http.ResponseWriter, r *http.Request)
 
 	res, err := collection.InsertOne(ctx, doc)
 	if err != nil {
-		fmt.Println("Could not insert document :/")
+		myLogger.Log.Error().Msg("Could not insert document :/")
 		http.Error(w, "Error: "+err.Error(), http.StatusBadRequest)
 		return
 	}
 
 	if res != nil {
-		fmt.Printf("Document batch was inserted. Res: %v\n", res)
+		myLogger.Log.Debug().Msgf("Document batch was inserted. Res: %v", res)
 	}
 
 	json.NewEncoder(w).Encode(MyDocumentId{ID: doc.ID})
@@ -205,17 +205,14 @@ func (s *serverContext) processBatchHandler(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	ctxProcess, cancelProcess := context.WithTimeout(r.Context(), 30*time.Second)
+	ctxProcess, cancelProcess := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancelProcess()
 
-	size := len(batchDocument.ToProcess)
-	myLogger.Log.Debug().Msgf("Size: %d\n", size)
-	updates := make([]mongo.WriteModel, 0, size)
-	myLogger.Log.Debug().Msgf("UpdateSize: %d\n", len(updates))
+	updates := make([]mongo.WriteModel, 0, len(batchDocument.ToProcess))
 
-	// fmt.Println("-------To process --------")
+	// myLogger.Log.Error().Msg("-------To process --------")
 	for i, doc := range batchDocument.ToProcess {
-		myLogger.Log.Debug().Msgf("Update n°%d -> key: %s\n", i, doc.Key)
+		myLogger.Log.Debug().Msgf("Update n°%d -> key: %s", i, doc.Key)
 		updates = append(updates,
 			mongo.NewUpdateOneModel().
 				SetFilter(bson.M{"key": doc.Key, "state": bson.M{"$ne": STATE_PROCESSED}}).
@@ -223,9 +220,19 @@ func (s *serverContext) processBatchHandler(w http.ResponseWriter, r *http.Reque
 		)
 	}
 
+	myLogger.Log.Debug().Msgf("Documents to update: %d", len(updates))
+
 	res, err := s.mongoClient.Database(s.dbName).Collection("documentCollection").BulkWrite(ctxProcess, updates)
 	if err != nil {
-		http.Error(w, "Error: "+err.Error(), http.StatusInternalServerError)
+		bulkErr, ok := err.(mongo.BulkWriteException)
+		if ok {
+			for _, writeErr := range bulkErr.WriteErrors {
+				myLogger.Log.Error().Msgf("[Bulk error] Index: %d | Error: %s", writeErr.Index, writeErr.Message)
+			}
+			http.Error(w, "Error bulk write: "+bulkErr.Error(), http.StatusInternalServerError)
+		} else {
+			http.Error(w, "Error: "+err.Error(), http.StatusInternalServerError)
+		}
 		return
 	}
 
