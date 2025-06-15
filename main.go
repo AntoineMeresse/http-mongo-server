@@ -24,7 +24,6 @@ const (
 )
 
 type serverContext struct {
-	port            string
 	mongoClient     *mongo.Client
 	dbName          string
 	collectionIndex map[string]bool
@@ -47,7 +46,12 @@ type MyDocumentId struct {
 }
 
 func (s *serverContext) rootHandler(w http.ResponseWriter, r *http.Request) {
-	fmt.Fprintf(w, "This is the main page. Port used: %s", s.port)
+	if r.URL.Path != "/" {
+		myLogger.Log.Debug().Msgf("Unknow page: %s", r.URL.Path)
+		http.NotFound(w, r)
+		return
+	}
+	fmt.Fprintf(w, "This is the main page.")
 }
 
 func (s *serverContext) healthHandler(w http.ResponseWriter, r *http.Request) {
@@ -257,20 +261,30 @@ func main() {
 	}
 
 	// Init context
-	ctx := serverContext{port: cfg.port, mongoClient: mongoClient, dbName: cfg.mongoDb, collectionIndex: make(map[string]bool)}
+	ctx := serverContext{mongoClient: mongoClient, dbName: cfg.mongoDb, collectionIndex: make(map[string]bool)}
 
-	port := fmt.Sprintf(":%s", ctx.port)
+	port := fmt.Sprintf(":%s", cfg.port)
+	managementPort := fmt.Sprintf(":%s", cfg.managementPort)
 
-	http.HandleFunc("GET /", ctx.rootHandler)
-	http.HandleFunc("GET /health", ctx.healthHandler)
-	http.HandleFunc("POST /save", ctx.saveHandler)
-	http.HandleFunc("POST /batch/save", ctx.saveBatchHandler)
-	http.HandleFunc("PUT /update/{key}/verified", ctx.updateToVerified)
-	http.HandleFunc("PUT /update/{key}/rejected", ctx.updateToRejected)
-	http.HandleFunc("PUT /process/{documentId}", ctx.processBatchHandler)
+	mainHttp := http.NewServeMux()
+	mainHttp.HandleFunc("GET /", ctx.rootHandler)
+	mainHttp.HandleFunc("POST /save", ctx.saveHandler)
+	mainHttp.HandleFunc("POST /batch/save", ctx.saveBatchHandler)
+	mainHttp.HandleFunc("PUT /update/{key}/verified", ctx.updateToVerified)
+	mainHttp.HandleFunc("PUT /update/{key}/rejected", ctx.updateToRejected)
+	mainHttp.HandleFunc("PUT /process/{documentId}", ctx.processBatchHandler)
 
-	myLogger.Log.Info().Msg("Server is listening on port http://localhost" + port)
-	if err := http.ListenAndServe(port, nil); err != nil {
-		myLogger.Log.Err(err).Msgf("Error while starting server: %s", err.Error())
+	if port == managementPort {
+		mainHttp.HandleFunc("GET /health", ctx.healthHandler)
+	} else {
+		go func() {
+			managementHttp := http.NewServeMux()
+			managementHttp.HandleFunc("GET /health", ctx.healthHandler)
+			myLogger.Log.Info().Msg("[Health] Server is listening on: http://localhost" + managementPort + "/health")
+			myLogger.Log.Fatal().Err(http.ListenAndServe(managementPort, managementHttp))
+		}()
 	}
+
+	myLogger.Log.Info().Msg("[ Main ] Server is listening on: http://localhost" + port)
+	myLogger.Log.Fatal().Err(http.ListenAndServe(port, mainHttp))
 }

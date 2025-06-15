@@ -1,4 +1,5 @@
 {
     "mongoUri" : "mongodb://root:password@localhost:27017",
-    "dev": true
+    "dev": true,
+    "managementPort": "8081"
 }	

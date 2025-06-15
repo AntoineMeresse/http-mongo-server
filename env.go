@@ -9,11 +9,12 @@ import (
 )
 
 type serverVar struct {
-	dev      bool
-	levelLog string
-	port     string
-	mongoUri string
-	mongoDb  string
+	dev            bool
+	levelLog       string
+	port           string
+	managementPort string
+	mongoUri       string
+	mongoDb        string
 }
 
 func loadConfigPath(configPath string) map[string]any {
@@ -43,6 +44,7 @@ func getEnvVariables(configPath string) serverVar {
 	vars.dev = loadBoolVariable(cfg, "dev", false)
 	vars.levelLog = loadVariable(cfg, "levelLog", "INFO")
 	vars.port = loadVariable(cfg, "serverPort", "8080")
+	vars.managementPort = loadVariable(cfg, "managementPort", "8080")
 	vars.mongoUri = loadVariable(cfg, "mongoUri", "mongodb://root:password@localhost:27017")
 	vars.mongoDb = loadVariable(cfg, "mongoDb", "testDefault")
 	return vars
