@@ -24,10 +24,12 @@ import (
 )
 
 var (
-	mongoClient   *mongo.Client
-	testDB        *mongo.Database
-	serverCtx     serverContext
-	serverAddress string
+	mongoContainer testcontainers.Container
+	clientOptions  *options.ClientOptions
+	mongoClient    *mongo.Client
+	testDB         *mongo.Database
+	serverCtx      serverContext
+	serverAddress  string
 )
 
 const (
@@ -39,28 +41,15 @@ func TestMain(m *testing.M) {
 	ctx := context.Background()
 	image := "mongo:latest"
 	containerRequest := testcontainers.ContainerRequest{Image: image, ExposedPorts: []string{"27017/tcp"}, WaitingFor: wait.ForListeningPort("27017/tcp")}
-	mongoContainer, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{ContainerRequest: containerRequest, Started: true})
+	container, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{ContainerRequest: containerRequest, Started: true})
 	if err != nil {
 		log.Fatalf("Could not start test container (image: %s)", image)
 	}
+	mongoContainer = container
 
-	// Mongo info
-	host, _ := mongoContainer.Host(ctx)
-	port, _ := mongoContainer.MappedPort(ctx, "27017")
-	uri := fmt.Sprintf("mongodb://%s:%s", host, port.Port())
-
-	dbName := "myServerTestDb"
-	clientOpts := options.Client().ApplyURI(uri).SetConnectTimeout(10 * time.Second)
-	client, err := mongo.Connect(ctx, clientOpts)
-	if err != nil {
-		log.Fatalf("Could not connect to MongoDB: %v", err)
-	}
-	mongoClient = client
-	testDB = client.Database(dbName)
-	clearDb()
-
-	serverCtx = serverContext{mongoClient: mongoClient, dbName: dbName, collectionIndex: make(map[string]bool)}
-	mainServer := serverCtx.MainServer()
+	setupMongo(ctx)
+	setupTestEnvironnement()
+	mainServer := serverCtx.MainServer(true)
 
 	// Start main serv on random port
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
@@ -72,18 +61,68 @@ func TestMain(m *testing.M) {
 	go server.Serve(listener)
 
 	serverAddress = "http://" + listener.Addr().String()
-
-	log.Printf("Mongo server uri: %s | Server uri: %s", uri, serverAddress)
+	log.Printf("Server url: %s", serverAddress)
 
 	code := m.Run()
 
 	log.Println("All tests were done")
-	server.Close()
-	mongoContainer.Terminate(ctx)
+	if err := server.Shutdown(ctx); err != nil {
+		log.Printf("Error shutting down server: %v", err)
+	} else {
+		log.Printf("Server was shutdown :)")
+	}
+
+	if err := mongoContainer.Terminate(ctx); err != nil {
+		log.Printf("Error shutting down mongo container: %v", err)
+	} else {
+		log.Printf("Mongo container was shutdown :)")
+	}
 	os.Exit(code)
 }
 
-func clearDb() {
+func setupMongo(ctx context.Context) string {
+	// Mongo info
+	host, _ := mongoContainer.Host(ctx)
+	port, _ := mongoContainer.MappedPort(ctx, "27017")
+	uri := fmt.Sprintf("mongodb://%s:%s", host, port.Port())
+	log.Printf("Mongo uri is: %s", uri)
+
+	dbName := "myServerTestDb"
+	clientOptions = options.Client().ApplyURI(uri).SetConnectTimeout(10 * time.Second)
+	client, err := mongo.Connect(ctx, clientOptions)
+	if err != nil {
+		log.Fatalf("Could not connect to MongoDB: %v", err)
+	}
+	mongoClient = client
+	testDB = client.Database(dbName)
+
+	if err = mongoClient.Ping(ctx, nil); !mongoContainer.IsRunning() || err != nil {
+		log.Fatalf("Mongo is not restarted or ping not responding: %v", err)
+	}
+
+	serverCtx = serverContext{mongoClient: mongoClient, dbName: dbName, collectionIndex: make(map[string]bool)}
+	return uri
+}
+
+func restartMongoIfStopped() {
+	if !mongoContainer.IsRunning() {
+		log.Println("Mongo was not running. Trying to restart it")
+		restartCtx, restartCancel := context.WithTimeout(context.TODO(), 10*time.Second)
+		defer restartCancel()
+		err := mongoContainer.Start(restartCtx)
+		if err != nil {
+			log.Fatalf("failed to start back the mongo container: %v", err)
+		}
+		setupMongo(restartCtx)
+
+	} else {
+		log.Println("Mongo is already running. Doesn't need to restart it")
+	}
+}
+
+func setupTestEnvironnement() {
+	restartMongoIfStopped()
+
 	ctx, cancel := context.WithTimeout(context.TODO(), 2*time.Second)
 	defer cancel()
 
@@ -92,7 +131,7 @@ func clearDb() {
 	if err != nil {
 		log.Printf("Error trying to drop collection (%s). Error: %s\n", DocumentCollection, err.Error())
 	} else {
-		log.Printf("[Collection: %s] It was cleared\n", DocumentCollection)
+		log.Printf("[Collection: %s] Was cleared\n", DocumentCollection)
 		// Needs to reset this map cause we cleared the db so the indexes should be created again
 		serverCtx.collectionIndex = map[string]bool{}
 	}
@@ -100,6 +139,7 @@ func clearDb() {
 	if listIndex {
 		listIndexes(DocumentCollection)
 	}
+
 }
 
 func listIndexes(collectionName string) {
@@ -130,6 +170,7 @@ func countDocument(collectionName string) int64 {
 }
 
 func TestHttpServerRoot(t *testing.T) {
+	setupTestEnvironnement()
 	url := fmt.Sprintf("%s/", serverAddress)
 
 	resp, err := http.Get(url)
@@ -153,7 +194,7 @@ func TestHttpServerRoot(t *testing.T) {
 }
 
 func TestHttpServerPostObject_OK(t *testing.T) {
-	clearDb()
+	setupTestEnvironnement()
 	url := fmt.Sprintf("%s/save", serverAddress)
 	doc := MyDocument{Name: "test1", Key: "key1"}
 
@@ -187,7 +228,7 @@ func TestHttpServerPostObject_OK(t *testing.T) {
 }
 
 func TestHttpServerPostObject_DuplicateKey(t *testing.T) {
-	clearDb()
+	setupTestEnvironnement()
 	url := fmt.Sprintf("%s/save", serverAddress)
 	doc := MyDocument{Name: "test1", Key: "key1"}
 
@@ -228,7 +269,7 @@ func TestHttpServerPostObject_DuplicateKey(t *testing.T) {
 }
 
 func TestHttpServerPostObject_Loop(t *testing.T) {
-	clearDb()
+	setupTestEnvironnement()
 	url := fmt.Sprintf("%s/save", serverAddress)
 	size := 10_000
 	var wg sync.WaitGroup
@@ -289,7 +330,7 @@ func putRequest(t *testing.T, key string, state string) *http.Response {
 }
 
 func TestHttpServerUpdateToVerified(t *testing.T) {
-	clearDb()
+	setupTestEnvironnement()
 
 	// Setup DB
 	myDoc := MyDocument{Name: "name1", Key: "Key1", State: STATE_INIT}
@@ -325,5 +366,63 @@ func TestHttpServerUpdateToVerified(t *testing.T) {
 
 	if docMongo.ID == nil || docMongo.State != STATE_VERIFIED {
 		t.Fatalf("Document id: %s state is expected to be: %s, got: %s.", id, STATE_VERIFIED, myDoc.State)
+	}
+}
+
+func TestHttpServerHealthCheck_OK(t *testing.T) {
+	setupTestEnvironnement()
+	url := fmt.Sprintf("%s/health", serverAddress)
+
+	resp, err := http.Get(url)
+	if err != nil {
+		t.Fatalf("GET request (url: %s) failed: %v", url, err)
+	}
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(resp.Body)
+
+	t.Logf("Status: %d", resp.StatusCode)
+	t.Logf("Body: %s", body)
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected: status 200, got: %d", resp.StatusCode)
+	}
+
+	expected := "UP"
+	if string(body) != expected {
+		t.Fatalf("expected: %s, got: %d", expected, body)
+	}
+}
+
+func TestHttpServerHealthCheck_KO(t *testing.T) {
+	setupTestEnvironnement()
+	url := fmt.Sprintf("%s/health", serverAddress)
+
+	ctx, cancel := context.WithTimeout(context.TODO(), 2*time.Second)
+	defer cancel()
+
+	// Stop container
+	if err := mongoContainer.Stop(ctx, nil); err != nil {
+		t.Fatalf("failed to stop container: %v", err)
+	}
+	t.Log("Container stopped")
+
+	resp, err := http.Get(url)
+	if err != nil {
+		t.Fatalf("GET request (url: %s) failed: %v", url, err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("expected: status 503, got: %d", resp.StatusCode)
+	}
+
+	// We can clear the mongo connection cause we will start again and it might be on a different port
+	if mongoClient != nil {
+		if err := mongoClient.Disconnect(ctx); err != nil {
+			log.Printf("Error disconnecting MongoDB client: %v", err)
+		} else {
+			log.Println("Mongo disconnected successfully")
+		}
 	}
 }

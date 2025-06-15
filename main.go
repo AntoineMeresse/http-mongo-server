@@ -245,7 +245,7 @@ func (s *serverContext) processBatchHandler(w http.ResponseWriter, r *http.Reque
 	json.NewEncoder(w).Encode(res)
 }
 
-func (ctx *serverContext) MainServer() *http.ServeMux {
+func (ctx *serverContext) MainServer(hasHealthEndpointOnSamePort bool) *http.ServeMux {
 	mainHttp := http.NewServeMux()
 	mainHttp.HandleFunc("GET /", ctx.rootHandler)
 	mainHttp.HandleFunc("POST /save", ctx.saveHandler)
@@ -253,6 +253,9 @@ func (ctx *serverContext) MainServer() *http.ServeMux {
 	mainHttp.HandleFunc("PUT /update/{key}/verified", ctx.updateToVerified)
 	mainHttp.HandleFunc("PUT /update/{key}/rejected", ctx.updateToRejected)
 	mainHttp.HandleFunc("PUT /process/{documentId}", ctx.processBatchHandler)
+	if hasHealthEndpointOnSamePort {
+		mainHttp.HandleFunc("GET /health", ctx.healthHandler)
+	}
 	return mainHttp
 }
 
@@ -278,12 +281,11 @@ func main() {
 
 	port := fmt.Sprintf(":%s", cfg.port)
 	managementPort := fmt.Sprintf(":%s", cfg.managementPort)
+	samePort := port == managementPort
 
-	mainHttp := ctx.MainServer()
+	mainHttp := ctx.MainServer(samePort)
 
-	if port == managementPort {
-		mainHttp.HandleFunc("GET /health", ctx.healthHandler)
-	} else {
+	if !samePort {
 		go func() {
 			managementHttp := http.NewServeMux()
 			managementHttp.HandleFunc("GET /health", ctx.healthHandler)
