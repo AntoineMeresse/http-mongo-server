@@ -11,11 +11,13 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
+	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 )
@@ -88,10 +90,17 @@ func clearDb() {
 	if err != nil {
 		log.Printf("Error trying to drop collection (%s). Error: %s\n", DocumentCollection, err.Error())
 	} else {
-		log.Printf("Collection (%s) was cleared\n", DocumentCollection)
+		log.Printf("[Collection: %s] It was cleared\n", DocumentCollection)
 		// Needs to reset this map cause we cleared the db so the indexes should be created again
 		serverCtx.collectionIndex = map[string]bool{}
 	}
+}
+
+func countDocument(collectionName string) int64 {
+	filter := bson.M{}
+	count, _ := testDB.Collection(collectionName).CountDocuments(context.TODO(), filter)
+	log.Printf("[Collection: %s] Nb documents: %d", collectionName, count)
+	return count
 }
 
 func TestHttpServerRoot(t *testing.T) {
@@ -166,9 +175,6 @@ func TestHttpServerPostObject_DuplicateKey(t *testing.T) {
 	}
 	defer resp_ok.Body.Close()
 
-	count, _ := testDB.Collection(DocumentCollection).CountDocuments(context.TODO(), nil)
-	log.Printf("Nb documents: %d", count)
-
 	if resp_ok.StatusCode != http.StatusOK {
 		t.Fatalf("expected: status 200, got: %d", resp_ok.StatusCode)
 	}
@@ -191,5 +197,53 @@ func TestHttpServerPostObject_DuplicateKey(t *testing.T) {
 	expected := "keyIndex dup key: { key: \"" + doc.Key + "\" }"
 	if !strings.Contains(string(body), expected) {
 		t.Fatalf("expected: (%s) in (%s) but it was not in the body", expected, body)
+	}
+}
+
+func TestHttpServerPostObject_Loop(t *testing.T) {
+	clearDb()
+	url := fmt.Sprintf("%s/save", serverAddress)
+	size := 10_000
+	var wg sync.WaitGroup
+	countChannel := make(chan int, size)
+
+	maxClient := 100
+	sem := make(chan struct{}, maxClient)
+
+	for i := range size {
+		wg.Add(1)
+		sem <- struct{}{}
+		go func(i int) {
+			defer wg.Done()
+			defer func() { <-sem }()
+			jsonStr := fmt.Sprintf(`{"name": "name%d", "key": "key%d"}`, i, i)
+			resp, err := http.Post(url, contentTypeJson, strings.NewReader(jsonStr))
+			if err != nil {
+				log.Printf("POST request (url: %s | Object: %s) failed: %v\n", url, jsonStr, err)
+				return
+			}
+			defer resp.Body.Close()
+			if resp.StatusCode == http.StatusOK {
+				countChannel <- 1
+			}
+		}(i)
+	}
+
+	go func() {
+		wg.Wait()
+		close(countChannel)
+		log.Println("Close channel after wg.Wait() is done")
+	}()
+
+	count := 0
+	for v := range countChannel {
+		count += v
+	}
+
+	log.Printf("Count is: %d\n", count)
+	nbDocuments := countDocument(DocumentCollection)
+
+	if count != size || int(nbDocuments) != size {
+		t.Fatalf("expected: %d, got: %d", size, count)
 	}
 }
