@@ -243,6 +243,17 @@ func (s *serverContext) processBatchHandler(w http.ResponseWriter, r *http.Reque
 	json.NewEncoder(w).Encode(res)
 }
 
+func (ctx *serverContext) MainServer() *http.ServeMux {
+	mainHttp := http.NewServeMux()
+	mainHttp.HandleFunc("GET /", ctx.rootHandler)
+	mainHttp.HandleFunc("POST /save", ctx.saveHandler)
+	mainHttp.HandleFunc("POST /batch/save", ctx.saveBatchHandler)
+	mainHttp.HandleFunc("PUT /update/{key}/verified", ctx.updateToVerified)
+	mainHttp.HandleFunc("PUT /update/{key}/rejected", ctx.updateToRejected)
+	mainHttp.HandleFunc("PUT /process/{documentId}", ctx.processBatchHandler)
+	return mainHttp
+}
+
 func main() {
 	cfg := getEnvVariables("./properties.json")
 	myLogger.InitLogging(cfg.dev, cfg.levelLog)
@@ -266,13 +277,7 @@ func main() {
 	port := fmt.Sprintf(":%s", cfg.port)
 	managementPort := fmt.Sprintf(":%s", cfg.managementPort)
 
-	mainHttp := http.NewServeMux()
-	mainHttp.HandleFunc("GET /", ctx.rootHandler)
-	mainHttp.HandleFunc("POST /save", ctx.saveHandler)
-	mainHttp.HandleFunc("POST /batch/save", ctx.saveBatchHandler)
-	mainHttp.HandleFunc("PUT /update/{key}/verified", ctx.updateToVerified)
-	mainHttp.HandleFunc("PUT /update/{key}/rejected", ctx.updateToRejected)
-	mainHttp.HandleFunc("PUT /process/{documentId}", ctx.processBatchHandler)
+	mainHttp := ctx.MainServer()
 
 	if port == managementPort {
 		mainHttp.HandleFunc("GET /health", ctx.healthHandler)
