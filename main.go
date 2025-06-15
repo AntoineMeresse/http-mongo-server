@@ -21,6 +21,8 @@ const (
 	STATE_VERIFIED  = "VERIFIED"
 	STATE_REJECTED  = "REJECTED"
 	STATE_PROCESSED = "PROCESSED"
+
+	DocumentCollection = "documentCollection"
 )
 
 type serverContext struct {
@@ -124,7 +126,7 @@ func (s *serverContext) saveHandler(w http.ResponseWriter, r *http.Request) {
 
 func (s *serverContext) updateToState(w http.ResponseWriter, r *http.Request, updateState string) {
 	key := r.PathValue("key")
-	collection := s.mongoClient.Database(s.dbName).Collection("documentCollection")
+	collection := s.mongoClient.Database(s.dbName).Collection(DocumentCollection)
 
 	filter := bson.M{"key": key, "state": STATE_INIT}
 	update := bson.M{
@@ -226,7 +228,7 @@ func (s *serverContext) processBatchHandler(w http.ResponseWriter, r *http.Reque
 
 	myLogger.Log.Debug().Msgf("Documents to update: %d", len(updates))
 
-	res, err := s.mongoClient.Database(s.dbName).Collection("documentCollection").BulkWrite(ctxProcess, updates)
+	res, err := s.mongoClient.Database(s.dbName).Collection(DocumentCollection).BulkWrite(ctxProcess, updates)
 	if err != nil {
 		bulkErr, ok := err.(mongo.BulkWriteException)
 		if ok {
